@@ -1,0 +1,98 @@
+-------------------------
+-- mstrnumbers that have a split order
+IF ( OBJECT_ID('tempdb..#table0') IS NOT NULL )
+    DROP TABLE #table0;
+select a.sopnumbe,a.mstrnumb,a.locncode,origtype
+into #table0
+from auto..sop30200 a
+where a.mstrnumb  in (select distinct mstrnumb
+                              from auto..sop30200
+                              where origtype<>0
+                              group by mstrnumb
+                              having count(MSTRNUMB)=1)
+order by a.mstrnumb desc 
+
+-- 2 tables combined with only split mastrnumbers
+IF ( OBJECT_ID('tempdb..#combined') IS NOT NULL )
+    DROP TABLE #combined;
+select a.sopnumbe,a.mstrnumb,a.locncode,a.origtype,st.time_stamp
+into #combined
+from #table0 a, auto.dbo.shipper_tracking st
+where a.SOPNUMBE = st.order_number 
+order by mstrnumb desc
+
+IF ( OBJECT_ID('tempdb..#table0') IS NOT NULL )
+    DROP TABLE #table0;
+select o.time,o.date,(o.date+' '+o.time) as time_stamp,gp_sop_number,a.mstrnumb
+into #table0
+from [orders_1a_paypal].dbo.orders_contacts o, auto..sop30200 a
+where a.sopnumbe=o.gp_sop_number
+union
+select o.time,o.date,(o.date+' '+o.time) as time_stamp,gp_sop_number,a.mstrnumb
+from [orders_am_paypal].dbo.orders_contacts o, auto..sop30200 a
+where a.sopnumbe=o.gp_sop_number
+order by time_stamp desc
+
+select c.sopnumbe,c.mstrnumb,c.locncode,c.origtype,t.time_stamp as order_time_stamp,c.time_stamp as ship_time_stamp
+into #temp
+from #combined c,#table0 t
+where c.sopnumbe = t.gp_sop_number 
+
+
+
+/*
+--combined tables
+IF ( OBJECT_ID('tempdb..#temp') IS NOT NULL )
+    DROP TABLE #temp;
+select c1.sopnumbe,c1.mstrnumb,c1.locncode,c2.time_stamp--,c2.sopnumbe,c2.locncode,c1.origtype,
+into #temp
+from #combined c1, #combined c2
+where c1.mstrnumb=c2.mstrnumb --and c1.locncode=c2.locncode
+order by c1.mstrnumb desc
+*/
+
+--order_time_stamp and ship_time_stamp times
+IF ( OBJECT_ID('tempdb..#time') IS NOT NULL )
+    DROP TABLE #time;
+select distinct mstrnumb,ship_time_stamp,order_time_stamp
+into #time
+from #temp
+order by mstrnumb desc
+
+
+--coverting times
+IF ( OBJECT_ID('tempdb..#convert') IS NOT NULL )
+    DROP TABLE #convert;
+select distinct mstrnumb,convert(varchar(5),DateDiff(s, order_time_stamp, ship_time_stamp)/3600) as a,convert(varchar(5),DateDiff(s, order_time_stamp, ship_time_stamp)%3600/60) as b,convert(varchar(5),(DateDiff(s, order_time_stamp, ship_time_stamp)%60)) as c
+            ,ship_time_stamp,order_time_stamp
+into #convert
+from #time 
+order by mstrnumb desc
+
+--convert2
+IF ( OBJECT_ID('tempdb..#convert2') IS NOT NULL )
+    DROP TABLE #convert2;
+select  mstrnumb,
+            CASE ISNUMERIC(a) WHEN 1 THEN CAST(a AS float) ELSE null END as 'hours',
+            CASE ISNUMERIC(b) WHEN 1 THEN CAST(b/60.0 AS float) ELSE null END as 'mins',
+            CASE ISNUMERIC(c) WHEN 1 THEN CAST(c/3600.0 AS float) ELSE null END as 'secs'
+            ,ship_time_stamp,order_time_stamp
+into #convert2
+from #convert
+order by mstrnumb desc
+
+-- time taken to ship for each mstrnumb
+IF ( OBJECT_ID('tempdb..#average') IS NOT NULL )
+    DROP TABLE #average;
+select  mstrnumb,(hours+mins+secs)/24 as time,ship_time_stamp,order_time_stamp
+into #average
+from #convert2
+order by hours+mins+secs desc
+
+
+select  mstrnumb,time as days,ship_time_stamp,order_time_stamp
+from #average
+order by time desc
+
+select avg(time) as [avg delay in days for shipping the non split orders]
+from #average
