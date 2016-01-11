@@ -1,0 +1,50 @@
+-- time stamp when the order was first placed
+IF ( OBJECT_ID('tempdb..#table1') IS NOT NULL )
+    DROP TABLE #table1;
+select o.date,o.time,(o.date+' '+o.time) as time_stamp,gp_sop_number,a.mstrnumb
+into #table1
+from [orders_1a_paypal].dbo.orders_contacts o, auto..sop30200 a
+where a.sopnumbe=o.gp_sop_number
+union
+select o.date,o.time,(o.date+' '+o.time) as time_stamp,gp_sop_number,a.mstrnumb
+from [orders_am_paypal].dbo.orders_contacts o, auto..sop30200 a
+where a.sopnumbe=o.gp_sop_number
+order by time_stamp desc
+
+--time stamps when the order got shipped
+IF ( OBJECT_ID('tempdb..#table2') IS NOT NULL )
+    DROP TABLE #table2;
+select a.sopnumbe,a.mstrnumb,a.locncode,a.origtype,st.time_stamp
+into #table2
+from auto..sop30200 a, auto.dbo.shipper_tracking st
+where a.SOPNUMBE = st.order_number
+order by mstrnumb desc
+
+-- complete table with initial and final time stamps
+select  t1.date,t1.time,t1.time_stamp as time1,t1.gp_sop_number,t1.mstrnumb,t2.time_stamp as time2
+into #fulltable
+from #table1 t1,#table2 t2
+where t1.gp_sop_number=t2.SOPNUMBE
+
+IF ( OBJECT_ID('tempdb..#convert') IS NOT NULL )
+    DROP TABLE #convert;
+select gp_sop_number,convert(varchar(5),DateDiff(s, time1, time2)/3600) as a,convert(varchar(5),DateDiff(s, time1, time2)%3600/60) as b,convert(varchar(5),(DateDiff(s, time1, time2)%60)) as c
+            ,time1,time2
+into #convert
+from #fulltable
+
+IF ( OBJECT_ID('tempdb..#convert2') IS NOT NULL )
+    DROP TABLE #convert2;
+select  gp_sop_number,CASE ISNUMERIC(a) WHEN 1 THEN CAST(a AS float) ELSE null END as 'hours',
+            CASE ISNUMERIC(b) WHEN 1 THEN CAST(b/60.0 AS float) ELSE null END as 'mins',
+            CASE ISNUMERIC(c) WHEN 1 THEN CAST(c/3600.0 AS float) ELSE null END as 'secs'
+                  ,time1,time2
+into #convert2
+from #convert
+
+
+select (hours+mins+secs)/24 as days,gp_sop_number,time1,time2
+from #convert2 
+where (hours+mins+secs)>2 --and time2 like '%2015%'
+order by days desc
+
