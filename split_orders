@@ -1,0 +1,126 @@
+-------------------------
+-- mstrnumbers that have a split order
+IF ( OBJECT_ID('tempdb..#table0') IS NOT NULL )
+    DROP TABLE #table0;
+select a.sopnumbe,a.mstrnumb,a.locncode,origtype
+into #table0
+from auto..sop30200 a
+where a.mstrnumb in (select distinct mstrnumb
+                              from auto..sop30200
+                              where origtype<>0
+                              group by mstrnumb
+                              having count(MSTRNUMB)>1)
+order by a.mstrnumb desc 
+
+-- 2 tables combined with only split mastrnumbers
+IF ( OBJECT_ID('tempdb..#combined') IS NOT NULL )
+    DROP TABLE #combined;
+select a.sopnumbe,a.mstrnumb,a.locncode,a.origtype,st.time_stamp
+into #combined
+from #table0 a, auto.dbo.shipper_tracking st
+where a.SOPNUMBE = st.order_number  --and origtype<>0
+order by mstrnumb desc
+
+
+--combined tables
+IF ( OBJECT_ID('tempdb..#temp') IS NOT NULL )
+    DROP TABLE #temp;
+select c1.sopnumbe,c1.mstrnumb,c1.locncode,c2.time_stamp--,c2.sopnumbe,c2.locncode,c1.origtype,
+into #temp
+from #combined c1, #combined c2
+where c1.mstrnumb=c2.mstrnumb and c1.locncode<>c2.locncode
+order by c1.mstrnumb desc
+
+
+--min and max times
+IF ( OBJECT_ID('tempdb..#time') IS NOT NULL )
+    DROP TABLE #time;
+select distinct mstrnumb,max(time_stamp) as max,min(time_stamp) as min--,time_stamp
+into #time
+from #temp
+group by mstrnumb--,time_stamp
+order by mstrnumb desc
+
+
+--coverting times
+IF ( OBJECT_ID('tempdb..#convert') IS NOT NULL )
+    DROP TABLE #convert;
+select distinct mstrnumb,convert(varchar(5),DateDiff(s, min, max)/3600) as a,convert(varchar(5),DateDiff(s, min, max)%3600/60) as b,convert(varchar(5),(DateDiff(s, min, max)%60)) as c
+            ,max,min
+into #convert
+from #time 
+order by mstrnumb desc
+
+--convert2
+IF ( OBJECT_ID('tempdb..#convert2') IS NOT NULL )
+    DROP TABLE #convert2;
+select  mstrnumb,
+            CASE ISNUMERIC(a) WHEN 1 THEN CAST(a AS float) ELSE null END as 'hours',
+            CASE ISNUMERIC(b) WHEN 1 THEN CAST(b/60.0 AS float) ELSE null END as 'mins',
+            CASE ISNUMERIC(c) WHEN 1 THEN CAST(c/3600.0 AS float) ELSE null END as 'secs'
+            ,max,min
+into #convert2
+from #convert
+order by mstrnumb desc
+
+
+
+IF ( OBJECT_ID('tempdb..#average') IS NOT NULL )
+    DROP TABLE #average;
+select count(mstrnumb) as [split_order_count_per_day],CONVERT(DATE, max) as [order_date]
+into #average
+from #convert2
+group by CONVERT(DATE, max)
+order by CONVERT(DATE, max) desc
+
+-- time taken to ship for each mstrnumb
+select  mstrnumb,hours+mins+secs as time
+from #convert2
+order by hours+mins+secs desc
+
+-- average time taken (in days) for shipping the split orders
+select CONVERT(DATE, max) as order_date,avg(hours+mins+secs) as [average time to ship split orders] -- hours+mins+secs as 'time',
+from #convert2
+group by CONVERT(DATE, max)
+order by avg(hours+mins+secs) desc
+
+-- per day count of split orders
+IF ( OBJECT_ID('tempdb..#split1') IS NOT NULL )
+    DROP TABLE #split1;
+select count(mstrnumb) as [split_order_count_per_day],CONVERT(DATE, max) as [order_date]
+into #split1
+from #convert2
+group by CONVERT(DATE, max)
+order by CONVERT(DATE, max) desc
+
+-- total count of orders per day
+IF ( OBJECT_ID('tempdb..#split2') IS NOT NULL )
+    DROP TABLE #split2;
+select count(*) as [no_of_orders],CONVERT(DATE, docdate) as docdate
+into #split2
+from auto..sop30200
+where soptype=2 and origtype=0 --and docdate>getdate()-7
+group by CONVERT(DATE, docdate)
+order by docdate
+
+-- % of split orders
+select (split_order_count_per_day+0.0)/(no_of_orders+0.0)*100.0 as [% of split orders],s1.order_date,split_order_count_per_day,no_of_orders
+from #split1 s1, #split2 s2
+where s1.order_date=s2.docdate
+order by s1.order_date desc
+
+-- total percentage of split order
+select (sum(s1.split_order_count_per_day+0.0))/(sum(s2.no_of_orders+0.0))*100 as [total % of split orders]
+from #split1 s1,#split2 s2
+where s1.order_date=s2.docdate
+
+
+-- avg count of all the orders
+select avg(split_order_count_per_day) as [avg # of split orders per day]
+from #average
+
+--time taken to ship for each split order
+select mstrnumb,hours+mins+secs as 'time',max as ship_date,min as order_date
+from #convert2
+order by time desc
+
