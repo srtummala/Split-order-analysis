@@ -1,0 +1,106 @@
+--orders placed before 5 but not shipped on the same day
+
+--get the time stamp when the cutomer first placed the orders
+IF ( OBJECT_ID('tempdb..#table0') IS NOT NULL )
+    DROP TABLE #table0;
+select o.time,o.date,(o.date+' '+o.time) as time_stamp,gp_sop_number,a.mstrnumb
+into #table0
+from [orders_1a_paypal].dbo.orders_contacts o, auto..sop30200 a
+where a.sopnumbe=o.gp_sop_number
+union
+select o.time,o.date,(o.date+' '+o.time) as time_stamp,gp_sop_number,a.mstrnumb
+from [orders_am_paypal].dbo.orders_contacts o, auto..sop30200 a
+where a.sopnumbe=o.gp_sop_number
+order by time_stamp desc
+
+-- get all the orders that were placed before 5PM
+IF ( OBJECT_ID('tempdb..#time17') IS NOT NULL )
+    DROP TABLE #time17;
+select time,date,gp_sop_number,mstrnumb,time_stamp
+into #time17
+from #table0
+where time<'17%'
+
+
+-- to get the time stamp when the order has been shipped
+select a.sopnumbe,a.mstrnumb,a.locncode,a.origtype,st.time_stamp
+into #table2
+from auto..sop30200 a, auto.dbo.shipper_tracking st
+where a.SOPNUMBE = st.order_number   --CONVERT(date,GETDATE())
+order by mstrnumb desc
+
+
+IF ( OBJECT_ID('tempdb..#table3') IS NOT NULL )
+    DROP TABLE #table3;
+select  --t1.time,t1.date
+            t1.time_stamp as time1,t2.time_stamp as time2,
+            CONVERT(DATE, t1.time_stamp) as [t1_date],CONVERT(TIME, t1.time_stamp) as t1_time
+            ,t1.gp_sop_number,t1.mstrnumb,t2.locncode,t2.origtype
+            ,CONVERT(DATE, t2.time_stamp) as t2_date,CONVERT(TIME, t2.time_stamp) as t2_time
+into #table3
+from #time17 t1, #table2 t2
+where t1.gp_sop_number=t2.sopnumbe
+
+/*
+select *
+from #table3
+where  convert(date,time1)='2014-12-23'-- and t1_date<>t2_date  
+*/
+
+IF ( OBJECT_ID('tempdb..#avgtable1') IS NOT NULL )
+    DROP TABLE #avgtable1;
+select time1,time2,gp_sop_number,mstrnumb,t1_date,t1_time,t2_date,t2_time,
+            convert(varchar(5),DateDiff(s, time1, time2)/3600) as a,convert(varchar(5),DateDiff(s, time1, time2)%3600/60) as b,convert(varchar(5),(DateDiff(s, time1, time2)%60)) as c
+into #avgtable1
+from #table3
+
+
+
+IF ( OBJECT_ID('tempdb..#avgtable2') IS NOT NULL )
+    DROP TABLE #avgtable2;
+select time1,time2,gp_sop_number,mstrnumb,t1_date,t1_time,t2_date,t2_time,
+            CASE ISNUMERIC(a) WHEN 1 THEN CAST(a AS float) ELSE null END as 'hours',
+            CASE ISNUMERIC(b) WHEN 1 THEN CAST(b/60.0 AS float) ELSE null END as 'mins',
+            CASE ISNUMERIC(c) WHEN 1 THEN CAST(c/3600.0 AS float) ELSE null END as 'secs'            
+into #avgtable2
+from #avgtable1
+
+-- if the ordered dates and shipped dates are not the same - it means it was not shipped on the same day
+IF ( OBJECT_ID('tempdb..#result') IS NOT NULL )
+    DROP TABLE #result;
+select time1,time2,gp_sop_number,mstrnumb,t1_date,t1_time,t2_date,t2_time,(hours+mins+secs)/24 as 'days'
+into #result
+from #avgtable2
+where  t1_date<>t2_date -- and convert(date,time1)='2015-11-21'
+
+
+--count per day
+IF ( OBJECT_ID('tempdb..#count') IS NOT NULL )
+    DROP TABLE #count;
+select count(gp_sop_number) as [not_shipped_same_day],t1_date
+into #count
+from #result
+group by t1_date
+order by count(gp_sop_number) desc
+
+--avg of count of orders that were not shipped on the same day
+select avg(not_shipped_same_day) as [avg_count per day]
+from #count
+
+-- per day stats
+select count(gp_sop_number) as [no. of orders not shipped],t1_date
+from #result
+group by t1_date
+order by count(gp_sop_number) desc
+
+
+-- daily avg for orders placed before 5PM and not shipped on the same day
+-- avg by day
+select avg(days) as [no. of days delayed],t1_date
+from #result
+group by t1_date
+order by avg(days) desc
+
+-- total avg 
+select avg(days) as [Total avg of the days delayed]
+from #result
