@@ -1,0 +1,159 @@
+USE [BrainTree] 
+GO
+
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROC #fakeID2
+AS
+BEGIN
+      SET NOCOUNT ON;
+
+if (object_id('tempdb..#main') is not null)
+begin
+    DROP TABLE #main;
+end
+
+
+CREATE TABLE #fraud (
+      order_id VARCHAR(20)
+      ,email VARCHAR(50)
+      ,CC_4 int
+      ,reason VARCHAR(50)
+      ,countries VARCHAR(10)
+      
+);
+
+
+CREATE TABLE #main (
+      order_id VARCHAR(20)
+      ,email VARCHAR(50)
+      ,CC_4 int
+      --,reason VARCHAR(50)
+      ,countries VARCHAR(50)
+      ,amount VARCHAR(50)
+      ,shipping_street_address VARCHAR(100)
+      ,billing_street_address VARCHAR(100)
+      ,gateway_rejection_reason VARCHAR(100)
+      ,status VARCHAR(100) 
+);
+CREATE TABLE #match (
+      order_id VARCHAR(50)
+      ,email VARCHAR(50)
+      ,CC_4 int
+      ,reason VARCHAR(50)
+      ,countries VARCHAR(50)
+      ,amount VARCHAR(50)
+      --,shipping_street_address VARCHAR(100)
+      --,billing_street_address VARCHAR(100)
+);
+
+
+--same email, >5 credit cards , >3 countries , diff shipping and billing & amount >500
+WITH main1 AS (
+
+      SELECT      DISTINCT 
+      order_id as 'order_id'
+      ,customer_email as 'email'
+      ,credit_card_last_4 as 'CC_4'
+      ,credit_card_country_of_issuance as 'countries'
+      ,amount as 'amount'
+      ,shipping_street_address
+      ,billing_street_address
+      ,gateway_rejection_reason
+      ,status
+      FROM braintree_transactions
+)
+
+--send output of the query to main table
+INSERT INTO #main(
+            order_id
+            ,email
+            ,CC_4
+            ,countries
+            ,amount
+            ,shipping_street_address
+            ,billing_street_address
+            ,gateway_rejection_reason
+            ,status
+)
+SELECT 
+            order_id
+            ,email
+            ,CC_4
+            ,countries
+            ,amount
+            ,shipping_street_address
+            ,billing_street_address
+            ,gateway_rejection_reason
+            ,status
+from main1
+;
+
+-- used >5 credit cards or >3 countires
+INSERT INTO #match(
+            order_id
+            ,email
+            ,CC_4
+            ,reason
+            ,countries
+)
+SELECT      
+      order_id    
+      ,email
+      ,count(distinct(CC_4))
+      ,'Used >5 credit cards or >3 countries' AS 'reason'
+      ,count(distinct(countries))
+FROM #main
+WHERE  email NOT IN ('noemail@kount.com','aa@aa.com') 
+GROUP BY order_id, email
+HAVING count(distinct(CC_4))>5 or count(distinct(countries))>3
+;
+
+
+INSERT INTO #match(
+            order_id
+            ,email
+            ,reason
+            ,amount
+)
+SELECT      
+order_id
+,email
+,'large amount, diff shipping and billing address' AS 'reason'
+,amount
+FROM #main 
+WHERE shipping_street_address<>billing_street_address and CAST(CAST (amount AS NUMERIC(19,4)) AS INT) > 500
+;
+
+INSERT INTO #match(
+            order_id
+            ,email
+            ,reason     
+)
+SELECT      
+order_id
+,email
+,'Gateway reason frauds >10' AS 'reason'
+FROM #main
+where gateway_rejection_reason='fraud'
+group by order_id,email
+having count(email)>10
+order by email 
+;
+
+
+SELECT distinct * 
+from #match
+order by email
+
+END
+
+GO
+
+--exec  #fakeID2
+
+--DROP PROCEDURE #fakeID2
