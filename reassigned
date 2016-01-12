@@ -1,0 +1,47 @@
+IF ( OBJECT_ID('tempdb..#table0') IS NOT NULL )
+    DROP TABLE #table0;
+select a.sopnumbe,a.mstrnumb,a.locncode,origtype
+into #table0
+from auto..sop30200 a
+where a.mstrnumb in (select distinct mstrnumb
+                              from auto..sop30200
+                              where origtype<>0
+                              group by mstrnumb
+                              having count(MSTRNUMB)>1)
+order by a.mstrnumb desc 
+
+-- sending split orders assigned to oher DCs into a table
+IF ( OBJECT_ID('tempdb..#mn') IS NOT NULL )
+    DROP TABLE #mn;
+select distinct t0.mstrnumb
+into #mn
+from #table0 t0,#table0 t1
+where t0.mstrnumb=t1.mstrnumb and t0.locncode<>t1.locncode
+order by t0.mstrnumb desc
+
+--only reassigned to diff Dcs orders details
+select a.sopnumbe,a.mstrnumb,a.locncode,origtype
+into #result
+from #table0 a
+where   a.mstrnumb in (select mstrnumb from #mn)
+order by mstrnumb desc
+
+-- DC that is re-assigning the most # of orders to other DCs
+select count(locncode) as [orders that were re-assigned from this DC],locncode as locncode--a.sopnumbe,a.mstrnumb,a.locncode,origtype
+from #result
+where origtype=0 
+group by locncode
+order by count(locncode) desc
+
+-- DCs to which the orders are getting re-assigned after split- count
+select count(locncode) as [split orders that were re-assigned to this DC],locncode--a.sopnumbe,a.mstrnumb,a.locncode,origtype
+from #result a
+where origtype<>0
+group by locncode
+order by count(locncode) desc
+
+
+
+
+
+
